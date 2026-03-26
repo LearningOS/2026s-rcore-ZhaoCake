@@ -2,7 +2,20 @@
 
 use super::TaskContext;
 
-const MAX_SYSCALL_NUM: usize = 512;
+/// Per-task syscall counters used by `sys_trace`.
+#[derive(Copy, Clone)]
+pub struct SyscallCounter {
+    /// Number of `write` syscalls issued by the task.
+    pub write: usize,
+    /// Number of `exit` syscalls issued by the task.
+    pub exit: usize,
+    /// Number of `yield` syscalls issued by the task.
+    pub yield_: usize,
+    /// Number of `get_time` syscalls issued by the task.
+    pub get_time: usize,
+    /// Number of `trace` syscalls issued by the task.
+    pub trace: usize,
+}
 
 /// The task control block (TCB) of a task.
 #[derive(Copy, Clone)]
@@ -12,7 +25,7 @@ pub struct TaskControlBlock {
     /// The task context
     pub task_cx: TaskContext,
     /// syscall statistics of this task
-    pub syscall_times: [usize; MAX_SYSCALL_NUM],
+    pub syscall_counter: SyscallCounter,
 }
 
 /// The status of a task

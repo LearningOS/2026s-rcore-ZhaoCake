@@ -19,9 +19,15 @@ use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
+pub use task::{SyscallCounter, TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+
+const SYSCALL_WRITE: usize = 64;
+const SYSCALL_EXIT: usize = 93;
+const SYSCALL_YIELD: usize = 124;
+const SYSCALL_GET_TIME: usize = 169;
+const SYSCALL_TRACE: usize = 410;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -54,7 +60,13 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
-            syscall_times: [0; 512],
+            syscall_counter: SyscallCounter {
+                write: 0,
+                exit: 0,
+                yield_: 0,
+                get_time: 0,
+                trace: 0,
+            },
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -88,7 +100,7 @@ impl TaskManager {
         unsafe {
             __switch(&mut _unused as *mut TaskContext, next_task_cx_ptr);
         }
-        panic!("unreachable in run_first_task!");
+        loop {}
     }
 
     /// Change the status of current `Running` task into `Ready`.
@@ -125,8 +137,14 @@ impl TaskManager {
     fn record_current_syscall(&self, syscall_id: usize) {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
-        if syscall_id < inner.tasks[current].syscall_times.len() {
-            inner.tasks[current].syscall_times[syscall_id] += 1;
+        let counter = &mut inner.tasks[current].syscall_counter;
+        match syscall_id {
+            SYSCALL_WRITE => counter.write += 1,
+            SYSCALL_EXIT => counter.exit += 1,
+            SYSCALL_YIELD => counter.yield_ += 1,
+            SYSCALL_GET_TIME => counter.get_time += 1,
+            SYSCALL_TRACE => counter.trace += 1,
+            _ => {}
         }
     }
 
@@ -134,11 +152,15 @@ impl TaskManager {
     fn current_syscall_times(&self, syscall_id: usize) -> usize {
         let inner = self.inner.exclusive_access();
         let current = inner.current_task;
-        inner.tasks[current]
-            .syscall_times
-            .get(syscall_id)
-            .copied()
-            .unwrap_or(0)
+        let counter = &inner.tasks[current].syscall_counter;
+        match syscall_id {
+            SYSCALL_WRITE => counter.write,
+            SYSCALL_EXIT => counter.exit,
+            SYSCALL_YIELD => counter.yield_,
+            SYSCALL_GET_TIME => counter.get_time,
+            SYSCALL_TRACE => counter.trace,
+            _ => 0,
+        }
     }
 
     /// Switch current `Running` task to the task we have found,
