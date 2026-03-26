@@ -1,6 +1,6 @@
 //! Process management syscalls
 use crate::{
-    task::{exit_current_and_run_next, suspend_current_and_run_next},
+    task::{current_syscall_times, exit_current_and_run_next, suspend_current_and_run_next},
     timer::get_time_us,
 };
 
@@ -14,8 +14,9 @@ pub struct TimeVal {
 /// task exits and submit an exit code
 pub fn sys_exit(exit_code: i32) -> ! {
     trace!("[kernel] Application exited with code {}", exit_code);
-    exit_current_and_run_next();
-    panic!("Unreachable in sys_exit!");
+    loop {
+        exit_current_and_run_next();
+    }
 }
 
 /// current task gives up resources for other tasks
@@ -41,5 +42,15 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 // TODO: implement the syscall
 pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     trace!("kernel: sys_trace");
-    -1
+    match trace_request {
+        0 => unsafe { (id as *const u8).read_volatile() as isize },
+        1 => {
+            unsafe {
+                (id as *mut u8).write_volatile(data as u8);
+            }
+            0
+        }
+        2 => current_syscall_times(id) as isize,
+        _ => -1,
+    }
 }

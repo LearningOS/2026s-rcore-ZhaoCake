@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_times: [0; 512],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -115,6 +116,31 @@ impl TaskManager {
             .find(|id| inner.tasks[*id].task_status == TaskStatus::Ready)
     }
 
+    /// Get the current running task id.
+    fn current_task(&self) -> usize {
+        self.inner.exclusive_access().current_task
+    }
+
+    /// Record one syscall for current task.
+    fn record_current_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if syscall_id < inner.tasks[current].syscall_times.len() {
+            inner.tasks[current].syscall_times[syscall_id] += 1;
+        }
+    }
+
+    /// Get syscall count of current task.
+    fn current_syscall_times(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .syscall_times
+            .get(syscall_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Switch current `Running` task to the task we have found,
     /// or there is no `Ready` task and we can exit with all applications completed
     fn run_next_task(&self) {
@@ -168,4 +194,19 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Get current running task id.
+pub fn current_task() -> usize {
+    TASK_MANAGER.current_task()
+}
+
+/// Record one syscall for current task.
+pub fn record_current_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_current_syscall(syscall_id);
+}
+
+/// Get syscall count of current task.
+pub fn current_syscall_times(syscall_id: usize) -> usize {
+    TASK_MANAGER.current_syscall_times(syscall_id)
 }

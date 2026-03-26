@@ -78,3 +78,5 @@ $ cd ci-user && make test CHAPTER=$ID
 ```
 
 Notice: $ID is from [3,4,5,6,8]
+
+> 项目中所用rcore-os/riscv库预先定义了完整的riscv寄存器结构，从而直接使用。应该是对汇编进行了封装得到的。确实是，并且除了对寄存器读写本身的封装，软件层面的也都有提供相应的表达，可以认为该库就是riscv privileged spec的rust版本实现了。值得学习。
