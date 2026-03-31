@@ -293,7 +293,7 @@ impl MemorySet {
         }
 
         self.push(
-            MapArea::new(start_va, VirtAddr::from(usize::from(end_vpn)), MapType::Framed, permission),
+            MapArea::new(start_va, end_vpn.into(), MapType::Framed, permission),
             None,
         );
         true
