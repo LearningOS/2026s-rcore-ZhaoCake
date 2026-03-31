@@ -17,7 +17,8 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    current_trap_cx, current_user_token, exit_current_and_run_next, increase_current_syscall_count,
+    suspend_current_and_run_next,
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
@@ -69,6 +70,7 @@ pub fn trap_handler() -> ! {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
             cx.sepc += 4;
+            increase_current_syscall_count(cx.x[17]);
             // get system call return value
             cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
         }
@@ -124,6 +126,7 @@ pub fn trap_return() -> ! {
             options(noreturn)
         );
     }
+    unreachable!("unreachable in trap_return")
 }
 
 #[no_mangle]
@@ -133,7 +136,7 @@ pub fn trap_return() -> ! {
 pub fn trap_from_kernel() -> ! {
     use riscv::register::sepc;
     trace!("stval = {:#x}, sepc = {:#x}", stval::read(), sepc::read());
-    panic!("a trap {:?} from kernel!", scause::read().cause());
+    panic!("a trap {:?} from kernel!", scause::read().cause())
 }
 
 pub use context::TrapContext;

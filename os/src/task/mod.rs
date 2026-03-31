@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::mm::{MapPermission, VirtAddr};
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -75,7 +76,7 @@ impl TaskManager {
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
     /// But in ch4, we load apps statically, so the first task is a real app.
-    fn run_first_task(&self) -> ! {
+    fn run_first_task(&self) {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
@@ -86,7 +87,7 @@ impl TaskManager {
         unsafe {
             __switch(&mut _unused as *mut _, next_task_cx_ptr);
         }
-        panic!("unreachable in run_first_task!");
+        panic!("unreachable in run_first_task!")
     }
 
     /// Change the status of current `Running` task into `Ready`.
@@ -131,6 +132,40 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
         inner.tasks[cur].change_program_brk(size)
+    }
+
+    /// Increase current task's syscall count for an id.
+    fn increase_current_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        if syscall_id < inner.tasks[cur].syscall_times.len() {
+            inner.tasks[cur].syscall_times[syscall_id] += 1;
+        }
+    }
+
+    /// Get current task's syscall count for an id.
+    fn get_current_syscall_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        if syscall_id < inner.tasks[cur].syscall_times.len() {
+            inner.tasks[cur].syscall_times[syscall_id] as isize
+        } else {
+            -1
+        }
+    }
+
+    /// Map anonymous framed pages in current task address space.
+    fn mmap_current(&self, start: VirtAddr, len: usize, perm: MapPermission) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.insert_mmap_area(start, len, perm)
+    }
+
+    /// Unmap pages in current task address space.
+    fn munmap_current(&self, start: VirtAddr, len: usize) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.remove_mmap_area(start, len)
     }
 
     /// Switch current `Running` task to the task we have found,
@@ -201,4 +236,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Increase current task's syscall count for a syscall id.
+pub fn increase_current_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.increase_current_syscall_count(syscall_id)
+}
+
+/// Get current task's syscall count for a syscall id.
+pub fn current_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
+}
+
+/// Map anonymous memory into current task's address space.
+pub fn current_mmap(start: VirtAddr, len: usize, perm: MapPermission) -> bool {
+    TASK_MANAGER.mmap_current(start, len, perm)
+}
+
+/// Unmap memory from current task's address space.
+pub fn current_munmap(start: VirtAddr, len: usize) -> bool {
+    TASK_MANAGER.munmap_current(start, len)
 }
