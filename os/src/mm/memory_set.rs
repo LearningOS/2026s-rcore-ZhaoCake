@@ -8,6 +8,7 @@ use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cmp::{max, min};
 use core::arch::asm;
 use lazy_static::*;
 use riscv::register::satp;
@@ -37,6 +38,17 @@ pub struct MemorySet {
 }
 
 impl MemorySet {
+    fn page_range_from_len(start_va: VirtAddr, len: usize) -> Option<(VirtPageNum, VirtPageNum)> {
+        let start: usize = start_va.into();
+        let start_vpn = start_va.floor();
+        if len == 0 {
+            return Some((start_vpn, start_vpn));
+        }
+        let end = start.checked_add(len)?;
+        let end_vpn = VirtAddr::from(end).ceil();
+        Some((start_vpn, end_vpn))
+    }
+
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
         Self {
@@ -299,6 +311,99 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    /// Insert mmap area with user permissions.
+    pub fn insert_mmap_area(&mut self, start_va: VirtAddr, len: usize, permission: MapPermission) -> bool {
+        let (start_vpn, end_vpn) = if let Some(range) = Self::page_range_from_len(start_va, len) {
+            range
+        } else {
+            return false;
+        };
+        if start_vpn == end_vpn {
+            return true;
+        }
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if self.page_table.translate(vpn).is_some() {
+                return false;
+            }
+        }
+        self.push(
+            MapArea::new(start_va, VirtAddr::from(usize::from(end_vpn)), MapType::Framed, permission),
+            None,
+        );
+        true
+    }
+
+    /// Remove mmap area range.
+    pub fn remove_mmap_area(&mut self, start_va: VirtAddr, len: usize) -> bool {
+        let (start_vpn, end_vpn) = if let Some(range) = Self::page_range_from_len(start_va, len) {
+            range
+        } else {
+            return false;
+        };
+        if start_vpn == end_vpn {
+            return true;
+        }
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if self.page_table.translate(vpn).is_none() {
+                return false;
+            }
+        }
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            self.page_table.unmap(vpn);
+        }
+
+        let mut new_areas: Vec<MapArea> = Vec::new();
+        for mut area in self.areas.drain(..) {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+            if end_vpn <= area_start || start_vpn >= area_end {
+                new_areas.push(area);
+                continue;
+            }
+
+            let overlap_start = max(start_vpn, area_start);
+            let overlap_end = min(end_vpn, area_end);
+
+            if area_start < overlap_start {
+                let mut left_area = MapArea {
+                    vpn_range: VPNRange::new(area_start, overlap_start),
+                    data_frames: BTreeMap::new(),
+                    map_type: area.map_type,
+                    map_perm: area.map_perm,
+                };
+                if area.map_type == MapType::Framed {
+                    for vpn in VPNRange::new(area_start, overlap_start) {
+                        if let Some(frame) = area.data_frames.remove(&vpn) {
+                            left_area.data_frames.insert(vpn, frame);
+                        }
+                    }
+                }
+                new_areas.push(left_area);
+            }
+
+            if overlap_end < area_end {
+                let mut right_area = MapArea {
+                    vpn_range: VPNRange::new(overlap_end, area_end),
+                    data_frames: BTreeMap::new(),
+                    map_type: area.map_type,
+                    map_perm: area.map_perm,
+                };
+                if area.map_type == MapType::Framed {
+                    for vpn in VPNRange::new(overlap_end, area_end) {
+                        if let Some(frame) = area.data_frames.remove(&vpn) {
+                            right_area.data_frames.insert(vpn, frame);
+                        }
+                    }
+                }
+                new_areas.push(right_area);
+            }
+        }
+        self.areas = new_areas;
+        true
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory
