@@ -287,8 +287,10 @@ impl MemorySet {
         }
 
         for vpn in VPNRange::new(start_vpn, end_vpn) {
-            if self.page_table.translate(vpn).is_some() {
-                return false;
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return false;
+                }
             }
         }
 
@@ -311,7 +313,11 @@ impl MemorySet {
         }
 
         for vpn in VPNRange::new(start_vpn, end_vpn) {
-            if self.page_table.translate(vpn).is_none() {
+            if self
+                .page_table
+                .translate(vpn)
+                .map_or(true, |pte| !pte.is_valid())
+            {
                 return false;
             }
         }
