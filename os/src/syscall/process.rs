@@ -1,5 +1,5 @@
 //! Process management syscalls
-use crate::mm::{translated_byte_buffer, MapPermission, PageTable, PTEFlags, StepByOne, VirtAddr};
+use crate::mm::{translated_byte_buffer, MapPermission, PageTable, PTEFlags, VirtAddr};
 use crate::task::{
     change_program_brk, current_mmap, current_munmap, current_syscall_count, current_user_token,
     exit_current_and_run_next, suspend_current_and_run_next,
@@ -46,7 +46,7 @@ fn user_range_has_perm(start: usize, len: usize, perm: PTEFlags) -> bool {
         if !pte.is_valid() || !pte.flags().contains(PTEFlags::U) || !pte.flags().contains(perm) {
             return false;
         }
-        vpn.step();
+        vpn.0 += 1;
     }
     true
 }

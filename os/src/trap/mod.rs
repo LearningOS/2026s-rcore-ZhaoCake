@@ -126,7 +126,6 @@ pub fn trap_return() -> ! {
             options(noreturn)
         );
     }
-    unreachable!("unreachable in trap_return")
 }
 
 #[no_mangle]
