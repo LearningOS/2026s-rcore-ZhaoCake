@@ -324,12 +324,14 @@ impl MemorySet {
             return true;
         }
         for vpn in VPNRange::new(start_vpn, end_vpn) {
-            if self.page_table.translate(vpn).is_some() {
-                return false;
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return false;
+                }
             }
         }
         self.push(
-            MapArea::new(start_va, VirtAddr::from(usize::from(end_vpn)), MapType::Framed, permission),
+            MapArea::new(start_va, end_vpn.into(), MapType::Framed, permission),
             None,
         );
         true
@@ -347,7 +349,11 @@ impl MemorySet {
         }
 
         for vpn in VPNRange::new(start_vpn, end_vpn) {
-            if self.page_table.translate(vpn).is_none() {
+            if self
+                .page_table
+                .translate(vpn)
+                .map_or(true, |pte| !pte.is_valid())
+            {
                 return false;
             }
         }
