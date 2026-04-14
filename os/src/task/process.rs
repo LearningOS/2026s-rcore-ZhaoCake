@@ -9,6 +9,7 @@ use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
 use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -49,6 +50,18 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// whether deadlock detection is enabled
+    pub deadlock_detect_enabled: bool,
+    /// owner tid for each mutex id
+    pub mutex_owner: Vec<Option<usize>>,
+    /// waiting mutex id for each tid
+    pub thread_wait_mutex: BTreeMap<usize, usize>,
+    /// waiting semaphore id for each tid
+    pub thread_wait_semaphore: BTreeMap<usize, usize>,
+    /// available amount for each semaphore id
+    pub semaphore_available: Vec<isize>,
+    /// allocation[sem_id][tid] = count
+    pub semaphore_allocation: Vec<BTreeMap<usize, usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +132,12 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    mutex_owner: Vec::new(),
+                    thread_wait_mutex: BTreeMap::new(),
+                    thread_wait_semaphore: BTreeMap::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
                 })
             },
         });
@@ -245,6 +264,12 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    mutex_owner: Vec::new(),
+                    thread_wait_mutex: BTreeMap::new(),
+                    thread_wait_semaphore: BTreeMap::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
                 })
             },
         });

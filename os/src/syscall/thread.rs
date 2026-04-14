@@ -110,6 +110,16 @@ pub fn sys_waittid(tid: usize) -> i32 {
         return -1;
     }
     if let Some(exit_code) = exit_code {
+        process_inner.thread_wait_mutex.remove(&tid);
+        process_inner.thread_wait_semaphore.remove(&tid);
+        for owner in process_inner.mutex_owner.iter_mut() {
+            if *owner == Some(tid) {
+                *owner = None;
+            }
+        }
+        for alloc in process_inner.semaphore_allocation.iter_mut() {
+            alloc.remove(&tid);
+        }
         // dealloc the exited thread
         process_inner.tasks[tid] = None;
         exit_code
