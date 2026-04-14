@@ -4,12 +4,19 @@ use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
+
+const BIG_STRIDE: usize = 0x7fff_ffff;
+
+fn stride_less(a: usize, b: usize) -> bool {
+    let diff = a.wrapping_sub(b);
+    diff > (usize::MAX >> 1)
+}
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
     ready_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
-/// A simple FIFO scheduler.
+/// A simple stride scheduler.
 impl TaskManager {
     ///Creat an empty TaskManager
     pub fn new() -> Self {
@@ -23,7 +30,26 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        let mut min_idx = 0usize;
+        let mut min_stride = usize::MAX;
+        for (idx, task) in self.ready_queue.iter().enumerate() {
+            let inner = task.inner_exclusive_access();
+            let stride = inner.stride;
+            drop(inner);
+            if idx == 0 || stride_less(stride, min_stride) {
+                min_idx = idx;
+                min_stride = stride;
+            }
+        }
+        let task = self.ready_queue.remove(min_idx).unwrap();
+        let mut inner = task.inner_exclusive_access();
+        let pass = (BIG_STRIDE / inner.priority).max(1);
+        inner.stride = inner.stride.wrapping_add(pass);
+        drop(inner);
+        Some(task)
     }
 }
 

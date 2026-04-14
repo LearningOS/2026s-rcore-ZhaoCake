@@ -8,6 +8,7 @@ use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cmp::{max, min};
 use core::arch::asm;
 use lazy_static::*;
 use riscv::register::satp;
@@ -317,6 +318,116 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    fn page_range_from_len(start: usize, len: usize) -> Option<(VirtPageNum, VirtPageNum)> {
+        if len == 0 {
+            return None;
+        }
+        let end = start.checked_add(len)?;
+        Some((VirtAddr::from(start).floor(), VirtAddr::from(end).ceil()))
+    }
+
+    /// Insert a framed mmap area [start, start + len) with user permissions.
+    pub fn insert_mmap_area(&mut self, start: usize, len: usize, port: usize) -> bool {
+        let (start_vpn, end_vpn) = match Self::page_range_from_len(start, len) {
+            Some(range) => range,
+            None => return false,
+        };
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return false;
+                }
+            }
+        }
+
+        let mut map_perm = MapPermission::U;
+        if (port & 0x1) != 0 {
+            map_perm |= MapPermission::R;
+        }
+        if (port & 0x2) != 0 {
+            map_perm |= MapPermission::W;
+        }
+        if (port & 0x4) != 0 {
+            map_perm |= MapPermission::X;
+        }
+        self.push(
+            MapArea::new(start_vpn.into(), end_vpn.into(), MapType::Framed, map_perm),
+            None,
+        );
+        true
+    }
+
+    /// Remove mappings in [start, start + len).
+    pub fn remove_mmap_area(&mut self, start: usize, len: usize) -> bool {
+        let (start_vpn, end_vpn) = match Self::page_range_from_len(start, len) {
+            Some(range) => range,
+            None => return false,
+        };
+
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            match self.page_table.translate(vpn) {
+                Some(pte) if pte.is_valid() => {}
+                _ => return false,
+            }
+        }
+
+        let mut idx = 0usize;
+        while idx < self.areas.len() {
+            let area_start: usize = usize::from(self.areas[idx].vpn_range.get_start());
+            let area_end: usize = usize::from(self.areas[idx].vpn_range.get_end());
+            let overlap_start = max(area_start, usize::from(start_vpn));
+            let overlap_end = min(area_end, usize::from(end_vpn));
+            if overlap_start < overlap_end {
+                let mut area = self.areas.remove(idx);
+                let old_start_vpn = area.vpn_range.get_start();
+                let old_end_vpn = area.vpn_range.get_end();
+                let overlap_start_vpn: VirtPageNum = overlap_start.into();
+                let overlap_end_vpn: VirtPageNum = overlap_end.into();
+                for vpn in VPNRange::new(overlap_start_vpn, overlap_end_vpn) {
+                    area.unmap_one(&mut self.page_table, vpn);
+                }
+                if old_start_vpn < overlap_start_vpn {
+                    let mut left = MapArea::new(
+                        old_start_vpn.into(),
+                        overlap_start_vpn.into(),
+                        area.map_type,
+                        area.map_perm,
+                    );
+                    if left.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(old_start_vpn, overlap_start_vpn) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                left.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+                    self.areas.insert(idx, left);
+                    idx += 1;
+                }
+                if overlap_end_vpn < old_end_vpn {
+                    let mut right = MapArea::new(
+                        overlap_end_vpn.into(),
+                        old_end_vpn.into(),
+                        area.map_type,
+                        area.map_perm,
+                    );
+                    if right.map_type == MapType::Framed {
+                        for vpn in VPNRange::new(overlap_end_vpn, old_end_vpn) {
+                            if let Some(frame) = area.data_frames.remove(&vpn) {
+                                right.data_frames.insert(vpn, frame);
+                            }
+                        }
+                    }
+                    self.areas.insert(idx, right);
+                    idx += 1;
+                }
+            } else {
+                idx += 1;
+            }
+        }
+        true
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory

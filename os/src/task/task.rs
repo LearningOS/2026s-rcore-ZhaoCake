@@ -11,6 +11,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
 
+const DEFAULT_PRIORITY: usize = 16;
+
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -71,6 +73,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Process priority used by stride scheduler.
+    pub priority: usize,
+
+    /// Current stride value used by stride scheduler.
+    pub stride: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +143,8 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority: DEFAULT_PRIORITY,
+                    stride: 0,
                 })
             },
         };
@@ -216,6 +226,8 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: parent_inner.priority,
+                    stride: parent_inner.stride,
                 })
             },
         });
@@ -260,6 +272,16 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// Set current process priority. Priority must be >= 2.
+    pub fn set_priority(&self, prio: isize) -> isize {
+        if prio < 2 {
+            return -1;
+        }
+        let mut inner = self.inner_exclusive_access();
+        inner.priority = prio as usize;
+        prio
     }
 }
 
